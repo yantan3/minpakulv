@@ -1,5 +1,5 @@
 name = "minpaku-review"
-main = "src/index.js"
+main = "src/minpaku-review.js"
 compatibility_date = "2026-06-01"
 
 [[d1_databases]]
