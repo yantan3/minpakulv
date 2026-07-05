@@ -199,25 +199,36 @@ async function callGemini(env, prompt) {
   if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY が未設定です');
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + MODEL +
     ':generateContent?key=' + env.GEMINI_API_KEY;
-  const res = await fetch(url, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      contents: [{ parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 1.2, maxOutputTokens: 2048 }
-    })
-  });
-  if (!res.ok) {
-    const t = await res.text();
-    throw new Error('Gemini API error ' + res.status + ': ' + t.slice(0, 200));
+  let lastStatus = 0;
+  for (let i = 0; i < 3; i++) {
+    if (i > 0) await sleep(1500 * i); // 2回目=1.5秒待ち, 3回目=3秒待ち
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 1.2, maxOutputTokens: 2048 }
+      })
+    });
+    if (res.status === 503 || res.status === 429) {
+      lastStatus = res.status;
+      continue; // 混雑・レート制限は再試行
+    }
+    if (!res.ok) {
+      const t = await res.text();
+      throw new Error('Gemini API error ' + res.status + ': ' + t.slice(0, 200));
+    }
+    const data = await res.json();
+    const parts = data && data.candidates && data.candidates[0] &&
+      data.candidates[0].content && data.candidates[0].content.parts;
+    const text = (parts || []).map(function (p) { return p.text || ''; }).join('');
+    if (!text) throw new Error('Geminiの応答が空でした');
+    return text;
   }
-  const data = await res.json();
-  const parts = data && data.candidates && data.candidates[0] &&
-    data.candidates[0].content && data.candidates[0].content.parts;
-  const text = (parts || []).map(function (p) { return p.text || ''; }).join('');
-  if (!text) throw new Error('Geminiの応答が空でした');
-  return text;
+  throw new Error('Gemini混雑中(' + lastStatus + ')。3回試しましたが通りませんでした。少し待ってから再度お試しください');
 }
+
+function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
 // ---------------- 類似度 (文字bigramのJaccard) ----------------
 
