@@ -1,0 +1,8 @@
+name = "minpaku-review"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "minpaku-review-db"
+database_id = "c9ed8cfa-0c87-4ebf-baaf-9a13d39c1632"
