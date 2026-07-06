@@ -344,74 +344,96 @@ const PAGE = `<!doctype html>
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>レビュー番頭</title>
+<title>返答自動生成</title>
 <style>
 :root{
-  --bg:#141416; --card:#1c1c20; --line:#2b2b31;
-  --tx:#e8e5de; --sub:#8b887f; --acc:#c9a86a;
+  --bg:#f7f5fb; --card:#ffffff; --line:#e7e2f2;
+  --tx:#2b2740; --sub:#8a86a3; --acc:#c2a24e; --accd:#a8873a;
+  --lav:#efeafb; --lavln:#ded4f2;
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;}
 html{background:var(--bg);}
 body{
   margin:0 auto; max-width:560px;
-  background:var(--bg); color:var(--tx);
+  background:linear-gradient(180deg,#f9f7fd 0%,#f4f0fb 100%);
+  min-height:100vh; color:var(--tx);
   font-family:"Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
   font-size:15px; line-height:1.75;
-  padding:24px 16px calc(32px + env(safe-area-inset-bottom));
+  padding:28px 16px calc(36px + env(safe-area-inset-bottom));
 }
 h1{
   font-family:"Hiragino Mincho ProN","Yu Mincho",serif;
-  font-size:22px; font-weight:600; letter-spacing:.18em; margin:0 0 2px;
+  font-size:23px; font-weight:600; letter-spacing:.16em; margin:0 0 3px;
+  background:linear-gradient(90deg,#3a3457,#6b5aa6);
+  -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent;
 }
-.sub{color:var(--sub); font-size:10px; letter-spacing:.28em; margin:0 0 22px;}
-.tabs{display:flex; gap:8px; margin:0 0 16px;}
+.sub{color:var(--acc); font-size:10px; letter-spacing:.3em; margin:0 0 24px; font-weight:600;}
+.tabs{display:flex; gap:10px; margin:0 0 18px;}
 .tab{
-  flex:1; padding:12px 0; text-align:center;
-  border:1px solid var(--line); border-radius:10px;
-  background:var(--card); color:var(--sub); font-size:14px;
-  cursor:pointer; user-select:none;
+  flex:1; padding:13px 0; text-align:center;
+  border:1px solid var(--lavln); border-radius:12px;
+  background:var(--lav); color:var(--sub); font-size:14px; font-weight:500;
+  cursor:pointer; user-select:none; transition:all .15s;
 }
-.tab.on{border-color:var(--acc); color:var(--acc);}
-label{display:block; color:var(--sub); font-size:12px; margin:14px 0 6px; letter-spacing:.06em;}
+.tab.on{
+  border-color:transparent; color:#fff;
+  background:linear-gradient(135deg,#7d6ab5,#9585c4);
+  box-shadow:0 4px 14px rgba(125,106,181,.28);
+}
+label{display:block; color:var(--sub); font-size:12px; margin:16px 0 6px; letter-spacing:.06em; font-weight:500;}
 input,textarea,select{
-  width:100%; background:var(--card); border:1px solid var(--line); border-radius:10px;
-  color:var(--tx); font-size:16px; padding:11px 12px; font-family:inherit;
+  width:100%; background:var(--card); border:1px solid var(--line); border-radius:12px;
+  color:var(--tx); font-size:16px; padding:12px 13px; font-family:inherit;
+  box-shadow:0 1px 3px rgba(80,60,140,.04);
 }
-input:focus,textarea:focus,select:focus{outline:none; border-color:var(--acc);}
+input::placeholder,textarea::placeholder{color:#b7b3c9;}
+input:focus,textarea:focus,select:focus{outline:none; border-color:var(--acc); box-shadow:0 0 0 3px rgba(194,162,78,.14);}
 textarea{resize:vertical; min-height:110px;}
 .btn{
-  width:100%; margin-top:20px; padding:15px 0;
-  border:none; border-radius:12px;
-  background:var(--acc); color:#17150f;
-  font-size:16px; font-weight:600; letter-spacing:.12em; cursor:pointer;
+  width:100%; margin-top:22px; padding:16px 0;
+  border:none; border-radius:14px;
+  background:linear-gradient(135deg,#ccae5c,#b0913c);
+  color:#fff; font-size:16px; font-weight:700; letter-spacing:.12em; cursor:pointer;
+  box-shadow:0 6px 18px rgba(176,145,60,.32);
 }
-.btn:disabled{opacity:.55;}
-.card{margin-top:18px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px;}
-.resultHead{display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px;}
-.langSel{width:auto; min-width:130px; padding:8px 10px; font-size:14px;}
-.meta{color:var(--sub); font-size:11px; margin-bottom:8px; letter-spacing:.05em;}
-.bodytext{white-space:pre-wrap; font-size:15px;}
+.btn:active{transform:translateY(1px);}
+.btn:disabled{opacity:.55; box-shadow:none;}
+.card{
+  margin-top:20px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px;
+  box-shadow:0 8px 26px rgba(90,70,150,.08);
+}
+.resultHead{display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px;}
+.langSel{
+  width:auto; min-width:130px; padding:9px 12px; font-size:14px;
+  background:var(--lav); border-color:var(--lavln); color:#5a4f7a; font-weight:600;
+}
+.meta{color:var(--sub); font-size:11px; margin-bottom:10px; letter-spacing:.05em;}
+.bodytext{white-space:pre-wrap; font-size:15px; color:#33304a;}
 .mini{
-  border:1px solid var(--acc); background:transparent; color:var(--acc);
-  border-radius:8px; font-size:12px; padding:7px 14px; cursor:pointer; white-space:nowrap;
+  border:1px solid var(--acc); background:transparent; color:var(--accd);
+  border-radius:9px; font-size:12px; padding:8px 15px; cursor:pointer; white-space:nowrap; font-weight:600;
 }
+.mini:active{background:var(--acc); color:#fff;}
 .copyRow{margin-top:12px; text-align:right;}
 h2{
   font-family:"Hiragino Mincho ProN","Yu Mincho",serif;
-  font-size:15px; font-weight:600; letter-spacing:.14em;
-  margin:30px 0 10px;
+  font-size:15px; font-weight:600; letter-spacing:.12em;
+  margin:32px 0 12px; color:#4a4468;
 }
-.hist{background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; margin-bottom:10px;}
+.hist{
+  background:var(--card); border:1px solid var(--line); border-radius:14px; padding:13px 15px; margin-bottom:11px;
+  box-shadow:0 3px 12px rgba(90,70,150,.05);
+}
 .histHead{display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;}
 .histMeta{color:var(--sub); font-size:11px;}
-.histText{font-size:13.5px; white-space:pre-wrap;}
+.histText{font-size:13.5px; white-space:pre-wrap; color:#494466;}
 .clamp{display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;}
 .empty{color:var(--sub); font-size:13px; padding:6px 2px;}
 </style>
 </head>
 <body>
-<h1>レビュー番頭</h1>
-<p class="sub">MINPAKU REVIEW GENERATOR</p>
+<h1>返答自動生成</h1>
+<p class="sub">AUTO REPLY GENERATOR</p>
 
 <div class="tabs">
   <div class="tab on" id="tabGuest">ゲスト宛て</div>
