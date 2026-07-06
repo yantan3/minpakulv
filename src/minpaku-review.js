@@ -49,6 +49,9 @@ export default {
       if (path === '/gen' && request.method === 'POST') {
         return await handleGen(request, env);
       }
+      if (path === '/translate' && request.method === 'POST') {
+        return await handleTranslate(request, env);
+      }
       if (path === '/history') {
         return await handleHistory(url, env);
       }
@@ -147,6 +150,47 @@ async function handleGen(request, env) {
     chars: best.len,
     sim: Math.round(best.sim * 100)
   });
+}
+
+// ---------------- 再翻訳 (編集後の本文を原文として他4言語を作り直す) ----------------
+
+async function handleTranslate(request, env) {
+  const body = await request.json();
+  const text = String(body.text || '').trim().slice(0, 2000);
+  const src = LANGS.some(function (l) { return l.key === body.sourceLang; }) ? body.sourceLang : 'ja';
+  if (!text) return json({ error: '翻訳するテキストが空です' }, 400);
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const raw = await callGemini(env, buildTranslatePrompt(text, src), 0.3);
+    const obj = parseLangs(raw);
+    obj[src] = text; // 原文(編集後)はそのまま採用
+    if (LANGS.every(function (l) { return obj[l.key]; })) {
+      return json({ langs: obj });
+    }
+  }
+  return json({ error: '翻訳結果の解析に失敗しました。もう一度お試しください' }, 502);
+}
+
+function langLabel(key) {
+  for (const l of LANGS) if (l.key === key) return l.label;
+  return key;
+}
+
+function buildTranslatePrompt(text, src) {
+  const lines = [];
+  lines.push('あなたはプロの翻訳者です。宿泊施設のホストがゲストに送る文章を翻訳します。');
+  lines.push('以下の' + langLabel(src) + 'の原文を、残りの4言語へ翻訳してください。');
+  lines.push('各言語ともその言語のネイティブが書いたような自然な文章にし、直訳調にしないこと。丁寧で温かいトーンを保つこと。');
+  lines.push('');
+  lines.push('--- 原文(' + langLabel(src) + ') ---');
+  lines.push(text);
+  lines.push('---');
+  lines.push('');
+  lines.push('# 出力形式(最重要)');
+  lines.push('以下のキーを持つJSONオブジェクトだけを出力。前置き・説明・コードフェンスは一切付けない。');
+  lines.push('"' + src + '" のキーには原文をそのまま入れること。');
+  lines.push('{"ja":"日本語","en":"English","zh-CN":"简体中文","zh-TW":"繁體中文","ko":"한국어"}');
+  return lines.join('\n');
 }
 
 // 文体・書き出し・締めをランダムに振って構造から変える
@@ -264,8 +308,9 @@ function cleanup(s) {
   return t;
 }
 
-async function callGemini(env, prompt) {
+async function callGemini(env, prompt, temperature) {
   if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY が未設定です');
+  const temp = (typeof temperature === 'number') ? temperature : 1.2;
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + MODEL +
     ':generateContent?key=' + env.GEMINI_API_KEY;
   let lastStatus = 0;
@@ -278,7 +323,7 @@ async function callGemini(env, prompt) {
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
-          temperature: 1.2,
+          temperature: temp,
           maxOutputTokens: 8192,
           responseMimeType: 'application/json',
           thinkingConfig: { thinkingBudget: 0 }
@@ -409,6 +454,12 @@ textarea{resize:vertical; min-height:110px;}
 }
 .meta{color:var(--sub); font-size:11px; margin-bottom:10px; letter-spacing:.05em;}
 .bodytext{white-space:pre-wrap; font-size:15px; color:#33304a;}
+.bodyedit{
+  width:100%; background:#fdfcff; border:1px dashed var(--lavln); border-radius:12px;
+  padding:11px 12px; font-family:inherit; font-size:15px; line-height:1.75; color:#33304a;
+  min-height:170px; resize:vertical;
+}
+.bodyedit:focus{outline:none; border-style:solid; border-color:var(--acc); box-shadow:0 0 0 3px rgba(194,162,78,.14);}
 .mini{
   border:1px solid var(--acc); background:transparent; color:var(--accd);
   border-radius:9px; font-size:12px; padding:8px 15px; cursor:pointer; white-space:nowrap; font-weight:600;
@@ -459,10 +510,11 @@ h2{
 <div class="card" id="resultCard" style="display:none">
   <div class="resultHead">
     <select class="langSel" id="langSel"></select>
+    <button class="mini" id="reTrans">再翻訳</button>
     <button class="mini" id="resultCopy">コピー</button>
   </div>
   <div class="meta" id="resultMeta"></div>
-  <div class="bodytext" id="resultText"></div>
+  <textarea class="bodyedit" id="resultText" placeholder="ここに本文（タップで編集できます）"></textarea>
 </div>
 
 <h2>履歴（直近10件・日本語・タップで全文）</h2>
@@ -480,6 +532,8 @@ var LANGS = [
 ];
 var lastLangs = null;  // 直近生成の5言語データ
 var curLang = 'ja';
+var dirty = false;     // 表示中テキストが編集され、他言語に未反映か
+var srcLang = 'ja';    // 編集の原文になっている言語
 
 function byId(id){ return document.getElementById(id); }
 function genLabel(){ return mode === 'guest' ? 'レビューを生成' : '返信を生成'; }
@@ -510,8 +564,7 @@ function setMode(m){
 
 function showLang(){
   if (!lastLangs) return;
-  var txt = lastLangs[curLang] || '(この言語の生成に失敗しました)';
-  byId('resultText').textContent = txt;
+  byId('resultText').value = lastLangs[curLang] || '';
 }
 
 async function gen(){
@@ -537,6 +590,8 @@ async function gen(){
     if (data.error) { throw new Error(data.error); }
     lastLangs = data.langs;
     curLang = 'ja';
+    dirty = false;
+    srcLang = 'ja';
     buildLangOptions();
     showLang();
     byId('resultMeta').textContent = '日本語 ' + data.chars + '文字 ／ 過去との最大類似度 ' + data.sim + '%';
@@ -614,11 +669,60 @@ async function loadHistory(){
   } catch (e) {}
 }
 
+async function translateNow(){
+  if (!lastLangs || !lastLangs[srcLang]) return false;
+  var sel = byId('langSel');
+  var re = byId('reTrans');
+  sel.disabled = true; re.disabled = true;
+  var old = re.textContent;
+  re.textContent = '翻訳中…';
+  try {
+    var res = await fetch('/translate', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: lastLangs[srcLang], sourceLang: srcLang })
+    });
+    var data = await res.json();
+    if (data.error) { throw new Error(data.error); }
+    lastLangs = data.langs;
+    dirty = false;
+    byId('resultMeta').textContent = '編集内容を全言語に反映しました';
+    return true;
+  } catch (e) {
+    alert('エラー: ' + e.message);
+    return false;
+  } finally {
+    sel.disabled = false; re.disabled = false;
+    re.textContent = old;
+  }
+}
+
+byId('resultText').oninput = function(){
+  if (!lastLangs) return;
+  lastLangs[curLang] = this.value;
+  dirty = true;
+  srcLang = curLang;
+  byId('resultMeta').textContent = '編集中（言語切替か再翻訳で他言語に反映）';
+};
+
 byId('tabGuest').onclick = function(){ setMode('guest'); };
 byId('tabReply').onclick = function(){ setMode('reply'); };
 byId('genBtn').onclick = gen;
-byId('langSel').onchange = function(){ curLang = this.value; showLang(); };
-byId('resultCopy').onclick = function(){ copyText(byId('resultText').textContent, byId('resultCopy')); };
+byId('langSel').onchange = async function(){
+  var target = this.value;
+  if (dirty) {
+    var ok = await translateNow(); // 編集があれば自動で再翻訳してから切替
+    if (!ok) { this.value = curLang; return; }
+  }
+  curLang = target;
+  showLang();
+};
+byId('reTrans').onclick = function(){
+  if (!lastLangs) return;
+  srcLang = curLang; // 表示中の言語を原文として作り直す
+  translateNow();
+};
+byId('resultCopy').onclick = function(){ copyText(byId('resultText').value, byId('resultCopy')); };
 
 buildLangOptions();
 setMode('guest');
