@@ -81,7 +81,9 @@ async function initDb(env) {
   await env.DB.prepare(
     'CREATE INDEX IF NOT EXISTS idx_reviews_mode_id ON reviews(mode, id)'
   ).run();
-  return json({ ok: true, message: 'table ready' });
+  // 解析失敗時に混入したJSON断片の履歴を掃除
+  await env.DB.prepare('DELETE FROM reviews WHERE text LIKE ?').bind('{"ja"%').run();
+  return json({ ok: true, message: 'table ready & cleaned' });
 }
 
 async function handleHistory(url, env) {
@@ -119,13 +121,20 @@ async function handleGen(request, env) {
     const raw = await callGemini(env, prompt);
     const obj = parseLangs(raw);
     const ja = obj.ja || '';
+    const complete = LANGS.every(function (l) { return obj[l.key]; });
     const sim = maxSim(bigrams(ja), pastGrams);
-    const cand = { langs: obj, ja: ja, sim: sim, len: ja.length };
-    if (!best || cand.sim < best.sim) best = cand;
-    if (sim < SIM_TH && ja.length >= LEN_MIN && ja.length <= LEN_MAX) {
+    const cand = { langs: obj, ja: ja, sim: sim, len: ja.length, complete: complete };
+    if (!best || (cand.complete && !best.complete) ||
+        (cand.complete === best.complete && cand.sim < best.sim)) best = cand;
+    if (complete && sim < SIM_TH && ja.length >= LEN_MIN && ja.length <= LEN_MAX) {
       best = cand;
       break;
     }
+  }
+
+  // 解析に失敗した生データを履歴に混ぜない
+  if (!best || !best.ja || best.ja.charAt(0) === '{') {
+    return json({ error: '生成結果の解析に失敗しました。もう一度お試しください' }, 502);
   }
 
   // 履歴は日本語のみ保存
@@ -216,19 +225,32 @@ function parseLangs(raw) {
   const s = t.indexOf('{');
   const e = t.lastIndexOf('}');
   if (s >= 0 && e > s) t = t.slice(s, e + 1);
-  let obj;
+  let obj = null;
   try {
     obj = JSON.parse(t);
   } catch (err) {
-    // JSONとして壊れていた場合、全文を日本語として扱うフォールバック
-    obj = { ja: cleanup(raw) };
+    obj = null;
+  }
+  if (!obj || typeof obj !== 'object') {
+    // JSONが壊れている(途中で切れた等)場合、言語ごとに正規表現で救出
+    obj = {};
+    LANGS.forEach(function (l) {
+      obj[l.key] = extractField(t, l.key);
+    });
   }
   const out = {};
   LANGS.forEach(function (l) {
     out[l.key] = String(obj[l.key] || '').trim();
   });
-  if (!out.ja) out.ja = cleanup(raw);
   return out;
+}
+
+// 壊れたJSONから "key":"value" を1つ救出してアンエスケープする
+function extractField(t, key) {
+  const re = new RegExp('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"');
+  const m = t.match(re);
+  if (!m) return '';
+  try { return JSON.parse('"' + m[1] + '"'); } catch (e2) { return m[1]; }
 }
 
 function cleanup(s) {
@@ -247,6 +269,7 @@ async function callGemini(env, prompt) {
   const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + MODEL +
     ':generateContent?key=' + env.GEMINI_API_KEY;
   let lastStatus = 0;
+  let lastBody = '';
   for (let i = 0; i < RETRY_TIMES; i++) {
     if (i > 0) await sleep(RETRY_BASE_MS * i); // 5秒 → 10秒 と延ばしてRPMの1分窓を跨ぐ
     const res = await fetch(url, {
@@ -256,13 +279,15 @@ async function callGemini(env, prompt) {
         contents: [{ parts: [{ text: prompt }] }],
         generationConfig: {
           temperature: 1.2,
-          maxOutputTokens: 4096,
-          responseMimeType: 'application/json'
+          maxOutputTokens: 8192,
+          responseMimeType: 'application/json',
+          thinkingConfig: { thinkingBudget: 0 }
         }
       })
     });
     if (res.status === 503 || res.status === 429) {
       lastStatus = res.status;
+      lastBody = await res.text(); // 429の詳細(どの制限に当たったか)を保持
       continue; // 混雑・レート制限は再試行
     }
     if (!res.ok) {
@@ -278,7 +303,7 @@ async function callGemini(env, prompt) {
   }
   const label = lastStatus === 429 ? 'レート上限' : '混雑';
   throw new Error('Gemini ' + label + '(' + lastStatus + ')。' + RETRY_TIMES +
-    '回試しましたが通りませんでした。1分ほど待ってから再度お試しください');
+    '回試しましたが通りませんでした。詳細: ' + lastBody.slice(0, 500));
 }
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
