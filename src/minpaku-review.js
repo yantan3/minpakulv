@@ -13,13 +13,17 @@
 //     シークレット: GEMINI_API_KEY
 // ============================================================
 
-const MODEL = 'gemini-2.5-flash-lite';
+const MODEL = 'gemini-2.5-flash-lite'; // 第一候補(表示用)
+// 503/429時はこの順に自動フォールバック(モデルごとに混雑・枠が別)
+const MODELS = [
+  'gemini-2.5-flash-lite',
+  'gemini-2.5-flash',
+  'gemini-2.0-flash-lite'
+];
 const SIM_TH = 0.38;           // 過去文との類似度がこれ以上なら書き直し (0-1)
 const LEN_MIN = 220;           // 日本語の許容文字数の下限
 const LEN_MAX = 380;           // 日本語の許容文字数の上限
-const MAX_ATTEMPTS = 1;        // 生成ループの最大試行回数(RPM対策で1回に抑制。0番目=1回)
-const RETRY_TIMES = 3;         // 503/429時のリトライ回数
-const RETRY_BASE_MS = 5000;    // リトライ間隔(RPMの1分窓を跨ぐため長め)
+const MAX_ATTEMPTS = 1;        // 生成ループの最大試行回数(RPM対策で抑制)
 const HISTORY_FOR_PROMPT = 10; // 「これらと似せるな」でプロンプトに渡す過去文の数
 const HISTORY_FOR_CHECK = 50;  // 類似度チェックに使う過去文の数
 
@@ -336,12 +340,12 @@ function cleanup(s) {
 async function callGemini(env, prompt, temperature) {
   if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY が未設定です');
   const temp = (typeof temperature === 'number') ? temperature : 1.2;
-  const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + MODEL +
-    ':generateContent?key=' + env.GEMINI_API_KEY;
   let lastStatus = 0;
   let lastBody = '';
-  for (let i = 0; i < RETRY_TIMES; i++) {
-    if (i > 0) await sleep(RETRY_BASE_MS * i); // 5秒 → 10秒 と延ばしてRPMの1分窓を跨ぐ
+  // MODELS配列を順に試す。503/429なら次のモデルへフォールバック
+  for (let mi = 0; mi < MODELS.length; mi++) {
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + MODELS[mi] +
+      ':generateContent?key=' + env.GEMINI_API_KEY;
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -357,8 +361,8 @@ async function callGemini(env, prompt, temperature) {
     });
     if (res.status === 503 || res.status === 429) {
       lastStatus = res.status;
-      lastBody = await res.text(); // 429の詳細(どの制限に当たったか)を保持
-      continue; // 混雑・レート制限は再試行
+      lastBody = await res.text();
+      continue; // 次のモデルへ
     }
     if (!res.ok) {
       const t = await res.text();
@@ -372,8 +376,8 @@ async function callGemini(env, prompt, temperature) {
     return text;
   }
   const label = lastStatus === 429 ? 'レート上限' : '混雑';
-  throw new Error('Gemini ' + label + '(' + lastStatus + ')。' + RETRY_TIMES +
-    '回試しましたが通りませんでした。詳細: ' + lastBody.slice(0, 500));
+  throw new Error('Gemini ' + label + '(' + lastStatus + ')。' + MODELS.length +
+    'モデル試しましたが全て混雑中でした。少し待ってから再度お試しください。詳細: ' + lastBody.slice(0, 300));
 }
 
 function sleep(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
