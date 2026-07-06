@@ -150,23 +150,19 @@ async function handleGen(request, env, uid) {
   for (let attempt = 0; attempt <= MAX_ATTEMPTS; attempt++) {
     const seed = pickSeed();
     const prompt = buildPrompt(mode, name, memo, reviewText, recent, seed, attempt);
-    const raw = await callGemini(env, prompt);
-    const obj = parseLangs(raw);
-    const ja = obj.ja || '';
-    const complete = LANGS.every(function (l) { return obj[l.key]; });
+    const raw = await callGemini(env, prompt, 1.2, false); // JSONモードOFF・日本語プレーン
+    const ja = cleanup(raw).replace(/^[「『"]/, '').replace(/[」』"]$/, '').trim();
     const sim = maxSim(bigrams(ja), pastGrams);
-    const cand = { langs: obj, ja: ja, sim: sim, len: ja.length, complete: complete };
-    if (!best || (cand.complete && !best.complete) ||
-        (cand.complete === best.complete && cand.sim < best.sim)) best = cand;
-    if (complete && sim < SIM_TH && ja.length >= LEN_MIN && ja.length <= LEN_MAX) {
+    const cand = { ja: ja, sim: sim, len: ja.length };
+    if (!best || cand.sim < best.sim) best = cand;
+    if (sim < SIM_TH && ja.length >= LEN_MIN && ja.length <= LEN_MAX) {
       best = cand;
       break;
     }
   }
 
-  // 解析に失敗した生データを履歴に混ぜない
-  if (!best || !best.ja || best.ja.charAt(0) === '{') {
-    return json({ error: '生成結果の解析に失敗しました。もう一度お試しください' }, 502);
+  if (!best || !best.ja) {
+    return json({ error: '生成に失敗しました。もう一度お試しください' }, 502);
   }
 
   // 履歴は日本語のみ保存(uid単位)
@@ -175,7 +171,7 @@ async function handleGen(request, env, uid) {
   ).bind(mode, name, best.ja, best.sim, uid, new Date().toISOString()).run();
 
   return json({
-    langs: best.langs,
+    ja: best.ja,
     chars: best.len,
     sim: Math.round(best.sim * 100)
   });
@@ -187,17 +183,14 @@ async function handleTranslate(request, env) {
   const body = await request.json();
   const text = String(body.text || '').trim().slice(0, 2000);
   const src = LANGS.some(function (l) { return l.key === body.sourceLang; }) ? body.sourceLang : 'ja';
+  const tgt = LANGS.some(function (l) { return l.key === body.targetLang; }) ? body.targetLang : 'en';
   if (!text) return json({ error: '翻訳するテキストが空です' }, 400);
+  if (src === tgt) return json({ text: text }); // 同一言語ならそのまま
 
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const raw = await callGemini(env, buildTranslatePrompt(text, src), 0.3);
-    const obj = parseLangs(raw);
-    obj[src] = text; // 原文(編集後)はそのまま採用
-    if (LANGS.every(function (l) { return obj[l.key]; })) {
-      return json({ langs: obj });
-    }
-  }
-  return json({ error: '翻訳結果の解析に失敗しました。もう一度お試しください' }, 502);
+  const raw = await callGemini(env, buildTranslatePrompt(text, src, tgt), 0.3, false);
+  const out = cleanup(raw).replace(/^[「『"]/, '').replace(/[」』"]$/, '').trim();
+  if (!out) return json({ error: '翻訳に失敗しました。もう一度お試しください' }, 502);
+  return json({ text: out });
 }
 
 function langLabel(key) {
@@ -205,20 +198,18 @@ function langLabel(key) {
   return key;
 }
 
-function buildTranslatePrompt(text, src) {
+function buildTranslatePrompt(text, src, tgt) {
   const lines = [];
   lines.push('あなたはプロの翻訳者です。宿泊施設のホストがゲストに送る文章を翻訳します。');
-  lines.push('以下の' + langLabel(src) + 'の原文を、残りの4言語へ翻訳してください。');
-  lines.push('各言語ともその言語のネイティブが書いたような自然な文章にし、直訳調にしないこと。丁寧で温かいトーンを保つこと。');
+  lines.push('以下の' + langLabel(src) + 'の原文を、' + langLabel(tgt) + 'に翻訳してください。');
+  lines.push('その言語のネイティブが書いたような自然な文章にし、直訳調にしないこと。丁寧で温かいトーンを保つこと。');
   lines.push('');
   lines.push('--- 原文(' + langLabel(src) + ') ---');
   lines.push(text);
   lines.push('---');
   lines.push('');
-  lines.push('# 出力形式(最重要)');
-  lines.push('以下のキーを持つJSONオブジェクトだけを出力。前置き・説明・コードフェンスは一切付けない。');
-  lines.push('"' + src + '" のキーには原文をそのまま入れること。');
-  lines.push('{"ja":"日本語","en":"English","zh-CN":"简体中文","zh-TW":"繁體中文","ko":"한국어"}');
+  lines.push('# 出力形式');
+  lines.push(langLabel(tgt) + 'の訳文だけを出力。前置き・説明・かぎ括弧・引用符は一切付けない。');
   return lines.join('\n');
 }
 
@@ -283,11 +274,8 @@ function buildPrompt(mode, name, memo, reviewText, recent, seed, attempt) {
   }
   lines.push('');
   lines.push('# 出力形式(最重要)');
-  lines.push('日本語本文を完成させたら、それを英語・簡体字中国語・繁体字中国語・韓国語に自然に翻訳し、');
-  lines.push('以下のキーを持つJSONオブジェクトだけを出力してください。');
-  lines.push('各言語はその言語のネイティブが書いた自然な文章にし、直訳調にしないこと。');
-  lines.push('前置き・説明・コードフェンス・かぎ括弧は一切付けず、JSONそのものだけを返すこと。');
-  lines.push('{"ja":"日本語本文","en":"English text","zh-CN":"简体中文","zh-TW":"繁體中文","ko":"한국어"}');
+  lines.push('日本語の本文だけを出力してください。翻訳や他言語は不要です。');
+  lines.push('前置き・説明・タイトル・かぎ括弧・引用符・コードフェンスは一切付けず、本文そのものだけを返すこと。');
   return lines.join('\n');
 }
 
@@ -337,26 +325,28 @@ function cleanup(s) {
   return t;
 }
 
-async function callGemini(env, prompt, temperature) {
+async function callGemini(env, prompt, temperature, jsonMode) {
   if (!env.GEMINI_API_KEY) throw new Error('GEMINI_API_KEY が未設定です');
   const temp = (typeof temperature === 'number') ? temperature : 1.2;
+  const useJson = (jsonMode !== false); // 明示的にfalseでなければJSON
   let lastStatus = 0;
   let lastBody = '';
   // MODELS配列を順に試す。503/429なら次のモデルへフォールバック
   for (let mi = 0; mi < MODELS.length; mi++) {
     const url = 'https://generativelanguage.googleapis.com/v1beta/models/' + MODELS[mi] +
       ':generateContent?key=' + env.GEMINI_API_KEY;
+    const cfg = {
+      temperature: temp,
+      maxOutputTokens: 2048,
+      thinkingConfig: { thinkingBudget: 0 }
+    };
+    if (useJson) cfg.responseMimeType = 'application/json';
     const res = await fetch(url, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         contents: [{ parts: [{ text: prompt }] }],
-        generationConfig: {
-          temperature: temp,
-          maxOutputTokens: 8192,
-          responseMimeType: 'application/json',
-          thinkingConfig: { thinkingBudget: 0 }
-        }
+        generationConfig: cfg
       })
     });
     if (res.status === 503 || res.status === 429) {
@@ -485,8 +475,8 @@ textarea{resize:vertical; min-height:110px;}
 .bodytext{white-space:pre-wrap; font-size:15px; color:#33304a;}
 .bodyedit{
   width:100%; background:#fdfcff; border:1px dashed var(--lavln); border-radius:12px;
-  padding:11px 12px; font-family:inherit; font-size:15px; line-height:1.75; color:#33304a;
-  min-height:170px; resize:vertical;
+  padding:13px 14px; font-family:inherit; font-size:15px; line-height:1.8; color:#33304a;
+  min-height:320px; resize:vertical;
 }
 .bodyedit:focus{outline:none; border-style:solid; border-color:var(--acc); box-shadow:0 0 0 3px rgba(194,162,78,.14);}
 .mini{
@@ -536,14 +526,14 @@ h2{
 
 <button class="btn" id="genBtn">レビューを生成</button>
 
-<div class="card" id="resultCard" style="display:none">
+<div class="card" id="resultCard">
   <div class="resultHead">
     <select class="langSel" id="langSel"></select>
-    <button class="mini" id="reTrans">再翻訳</button>
+    <button class="mini" id="reTrans">翻訳</button>
     <button class="mini" id="resultCopy">コピー</button>
   </div>
-  <div class="meta" id="resultMeta"></div>
-  <textarea class="bodyedit" id="resultText" placeholder="ここに本文（タップで編集できます）"></textarea>
+  <div class="meta" id="resultMeta">生成するか、自分で本文を入力して「翻訳」を押せます</div>
+  <textarea class="bodyedit" id="resultText" placeholder="生成した本文がここに表示されます。自分で入力して、上のプルダウンで言語を選ぶとその言語に翻訳します（約400字まで）"></textarea>
 </div>
 
 <h2>履歴（直近10件・日本語・タップで全文）</h2>
@@ -559,10 +549,9 @@ var LANGS = [
   { key: 'zh-TW', label: '繁體中文' },
   { key: 'ko', label: '한국어' }
 ];
-var lastLangs = null;  // 直近生成の5言語データ
-var curLang = 'ja';
-var dirty = false;     // 表示中テキストが編集され、他言語に未反映か
-var srcLang = 'ja';    // 編集の原文になっている言語
+var cache = {};        // 言語ごとの翻訳キャッシュ { ja:'...', en:'...' }
+var curLang = 'ja';    // いま表示中の言語
+var baseLang = 'ja';   // 原文の言語(生成なら日本語、手入力ならその言語)
 
 function byId(id){ return document.getElementById(id); }
 function genLabel(){ return mode === 'guest' ? 'レビューを生成' : '返信を生成'; }
@@ -586,14 +575,16 @@ function setMode(m){
   byId('guestFields').style.display = (m === 'guest') ? '' : 'none';
   byId('replyFields').style.display = (m === 'reply') ? '' : 'none';
   byId('genBtn').textContent = genLabel();
-  byId('resultCard').style.display = 'none';
-  lastLangs = null;
+  cache = {};
+  curLang = 'ja'; baseLang = 'ja';
+  byId('langSel').value = 'ja';
+  byId('resultText').value = '';
+  byId('resultMeta').textContent = '生成するか、自分で本文を入力して言語を選ぶと翻訳します';
   loadHistory();
 }
 
 function showLang(){
-  if (!lastLangs) return;
-  byId('resultText').value = lastLangs[curLang] || '';
+  byId('resultText').value = cache[curLang] || '';
 }
 
 async function gen(){
@@ -608,7 +599,7 @@ async function gen(){
     if (!payload.reviewText.trim()) { alert('ゲストのレビュー本文を貼り付けてください'); return; }
   }
   btn.disabled = true;
-  btn.textContent = '生成中…（最大30秒）';
+  btn.textContent = '生成中…';
   try {
     var res = await fetch('/gen', {
       method: 'POST',
@@ -618,14 +609,11 @@ async function gen(){
     });
     var data = await res.json();
     if (data.error) { throw new Error(data.error); }
-    lastLangs = data.langs;
-    curLang = 'ja';
-    dirty = false;
-    srcLang = 'ja';
-    buildLangOptions();
+    cache = { ja: data.ja };  // 生成直後は日本語だけ。他言語は選択時に翻訳
+    curLang = 'ja'; baseLang = 'ja';
+    byId('langSel').value = 'ja';
     showLang();
     byId('resultMeta').textContent = '日本語 ' + data.chars + '文字 ／ 過去との最大類似度 ' + data.sim + '%';
-    byId('resultCard').style.display = '';
     loadHistory();
   } catch (e) {
     alert('エラー: ' + e.message);
@@ -699,8 +687,11 @@ async function loadHistory(){
   } catch (e) {}
 }
 
-async function translateNow(){
-  if (!lastLangs || !lastLangs[srcLang]) return false;
+// 指定言語をキャッシュから取得。無ければ原文から1言語だけ翻訳
+async function ensureLang(target){
+  if (cache[target] != null) return true;      // 既に持ってる
+  var baseText = cache[baseLang];
+  if (!baseText || !baseText.trim()) { alert('先に本文を入力または生成してください'); return false; }
   var sel = byId('langSel');
   var re = byId('reTrans');
   sel.disabled = true; re.disabled = true;
@@ -711,13 +702,11 @@ async function translateNow(){
       method: 'POST',
       credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ text: lastLangs[srcLang], sourceLang: srcLang })
+      body: JSON.stringify({ text: baseText, sourceLang: baseLang, targetLang: target })
     });
     var data = await res.json();
     if (data.error) { throw new Error(data.error); }
-    lastLangs = data.langs;
-    dirty = false;
-    byId('resultMeta').textContent = '編集内容を全言語に反映しました';
+    cache[target] = data.text;
     return true;
   } catch (e) {
     alert('エラー: ' + e.message);
@@ -729,11 +718,11 @@ async function translateNow(){
 }
 
 byId('resultText').oninput = function(){
-  if (!lastLangs) return;
-  lastLangs[curLang] = this.value;
-  dirty = true;
-  srcLang = curLang;
-  byId('resultMeta').textContent = '編集中（言語切替か再翻訳で他言語に反映）';
+  // 手入力/編集: 表示中の言語を原文として扱い、他言語キャッシュは破棄
+  baseLang = curLang;
+  cache = {};
+  cache[curLang] = this.value;
+  byId('resultMeta').textContent = '入力中（言語を選ぶとその言語へ翻訳します）';
 };
 
 byId('tabGuest').onclick = function(){ setMode('guest'); };
@@ -741,19 +730,26 @@ byId('tabReply').onclick = function(){ setMode('reply'); };
 byId('genBtn').onclick = gen;
 byId('langSel').onchange = async function(){
   var target = this.value;
-  if (dirty) {
-    var ok = await translateNow(); // 編集があれば自動で再翻訳してから切替
-    if (!ok) { this.value = curLang; return; }
-  }
+  if (target === curLang) return;
+  var ok = await ensureLang(target);
+  if (!ok) { this.value = curLang; return; }
   curLang = target;
   showLang();
+  byId('resultMeta').textContent = labelOf(target) + 'を表示中';
 };
-byId('reTrans').onclick = function(){
-  if (!lastLangs) return;
-  srcLang = curLang; // 表示中の言語を原文として作り直す
-  translateNow();
+byId('reTrans').onclick = async function(){
+  // 表示中の言語を訳し直す(キャッシュ破棄して再取得)
+  if (curLang === baseLang) { alert('原文の言語です。他の言語を選ぶと翻訳します'); return; }
+  delete cache[curLang];
+  var ok = await ensureLang(curLang);
+  if (ok) { showLang(); byId('resultMeta').textContent = labelOf(curLang) + 'を翻訳し直しました'; }
 };
 byId('resultCopy').onclick = function(){ copyText(byId('resultText').value, byId('resultCopy')); };
+
+function labelOf(key){
+  for (var i=0;i<LANGS.length;i++){ if (LANGS[i].key===key) return LANGS[i].label; }
+  return key;
+}
 
 buildLangOptions();
 setMode('guest');
