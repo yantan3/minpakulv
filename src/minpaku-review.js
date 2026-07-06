@@ -37,8 +37,11 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
     try {
+      const uid = getOrMakeUid(request);
       if (path === '/') {
-        return new Response(PAGE, { headers: { 'content-type': 'text/html;charset=utf-8' } });
+        const headers = new Headers({ 'content-type': 'text/html;charset=utf-8' });
+        headers.append('set-cookie', uidCookie(uid));
+        return new Response(PAGE, { headers: headers });
       }
       if (path === '/ping') {
         return json({ ok: true, model: MODEL });
@@ -47,13 +50,13 @@ export default {
         return await initDb(env);
       }
       if (path === '/gen' && request.method === 'POST') {
-        return await handleGen(request, env);
+        return await handleGen(request, env, uid);
       }
       if (path === '/translate' && request.method === 'POST') {
         return await handleTranslate(request, env);
       }
       if (path === '/history') {
-        return await handleHistory(url, env);
+        return await handleHistory(url, env, uid);
       }
       return new Response('not found', { status: 404 });
     } catch (e) {
@@ -61,6 +64,25 @@ export default {
     }
   }
 };
+
+// ---------------- ユーザー識別 (クッキーで端末別ID) ----------------
+
+function getOrMakeUid(request) {
+  const cookie = request.headers.get('cookie') || '';
+  const m = cookie.match(/(?:^|;\s*)uid=([A-Za-z0-9_-]{8,64})/);
+  if (m) return m[1];
+  // ランダム22文字前後のID生成
+  const bytes = new Uint8Array(16);
+  crypto.getRandomValues(bytes);
+  let s = '';
+  for (let i = 0; i < bytes.length; i++) s += bytes[i].toString(36);
+  return ('u' + s).slice(0, 40);
+}
+
+function uidCookie(uid) {
+  // 400日保持・全パス・SameSite=Lax・HTTPS前提でSecure
+  return 'uid=' + uid + '; Max-Age=34560000; Path=/; SameSite=Lax; Secure';
+}
 
 function json(obj, status) {
   return new Response(JSON.stringify(obj), {
@@ -79,27 +101,30 @@ async function initDb(env) {
     'name TEXT,' +
     'text TEXT NOT NULL,' +
     'sim REAL,' +
+    'uid TEXT,' +
     'created_at TEXT)'
   ).run();
+  // 既存テーブルにuid列が無ければ追加(エラーは無視)
+  try { await env.DB.prepare('ALTER TABLE reviews ADD COLUMN uid TEXT').run(); } catch (e) {}
   await env.DB.prepare(
-    'CREATE INDEX IF NOT EXISTS idx_reviews_mode_id ON reviews(mode, id)'
+    'CREATE INDEX IF NOT EXISTS idx_reviews_uid_mode_id ON reviews(uid, mode, id)'
   ).run();
   // 解析失敗時に混入したJSON断片の履歴を掃除
   await env.DB.prepare('DELETE FROM reviews WHERE text LIKE ?').bind('{"ja"%').run();
   return json({ ok: true, message: 'table ready & cleaned' });
 }
 
-async function handleHistory(url, env) {
+async function handleHistory(url, env, uid) {
   const mode = url.searchParams.get('mode') === 'reply' ? 'reply' : 'guest';
   const rows = await env.DB.prepare(
-    'SELECT id, name, text, sim, created_at FROM reviews WHERE mode = ? ORDER BY id DESC LIMIT 10'
-  ).bind(mode).all();
+    'SELECT id, name, text, sim, created_at FROM reviews WHERE uid = ? AND mode = ? ORDER BY id DESC LIMIT 10'
+  ).bind(uid, mode).all();
   return json({ items: rows.results || [] });
 }
 
 // ---------------- 生成 ----------------
 
-async function handleGen(request, env) {
+async function handleGen(request, env, uid) {
   const body = await request.json();
   const mode = body.mode === 'reply' ? 'reply' : 'guest';
   const name = String(body.name || '').trim().slice(0, 40);
@@ -111,8 +136,8 @@ async function handleGen(request, env) {
   }
 
   const rows = await env.DB.prepare(
-    'SELECT text FROM reviews WHERE mode = ? ORDER BY id DESC LIMIT ?'
-  ).bind(mode, HISTORY_FOR_CHECK).all();
+    'SELECT text FROM reviews WHERE uid = ? AND mode = ? ORDER BY id DESC LIMIT ?'
+  ).bind(uid, mode, HISTORY_FOR_CHECK).all();
   const pastTexts = (rows.results || []).map(function (r) { return r.text; });
   const pastGrams = pastTexts.map(bigrams);
   const recent = pastTexts.slice(0, HISTORY_FOR_PROMPT);
@@ -140,10 +165,10 @@ async function handleGen(request, env) {
     return json({ error: '生成結果の解析に失敗しました。もう一度お試しください' }, 502);
   }
 
-  // 履歴は日本語のみ保存
+  // 履歴は日本語のみ保存(uid単位)
   await env.DB.prepare(
-    'INSERT INTO reviews (mode, name, text, sim, created_at) VALUES (?, ?, ?, ?, ?)'
-  ).bind(mode, name, best.ja, best.sim, new Date().toISOString()).run();
+    'INSERT INTO reviews (mode, name, text, sim, uid, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+  ).bind(mode, name, best.ja, best.sim, uid, new Date().toISOString()).run();
 
   return json({
     langs: best.langs,
@@ -583,6 +608,7 @@ async function gen(){
   try {
     var res = await fetch('/gen', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(payload)
     });
@@ -638,7 +664,7 @@ function fmtDate(iso){
 
 async function loadHistory(){
   try {
-    var res = await fetch('/history?mode=' + mode);
+    var res = await fetch('/history?mode=' + mode, { credentials: 'same-origin' });
     var data = await res.json();
     var list = byId('histList');
     list.innerHTML = '';
@@ -679,6 +705,7 @@ async function translateNow(){
   try {
     var res = await fetch('/translate', {
       method: 'POST',
+      credentials: 'same-origin',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ text: lastLangs[srcLang], sourceLang: srcLang })
     });
