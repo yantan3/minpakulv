@@ -748,6 +748,8 @@ byId('reTrans').onclick = async function(){
 };
 byId('resultCopy').onclick = function(){ copyText(byId('resultText').value, byId('resultCopy')); };
 byId('clearBtn').onclick = function(){
+  if (!byId('resultText').value.trim()) return; // 既に空なら何もしない
+  if (!confirm('本文を消去します。よろしいですか？')) return;
   cache = {};
   curLang = 'ja'; baseLang = 'ja';
   byId('langSel').value = 'ja';
