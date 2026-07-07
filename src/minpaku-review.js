@@ -15,10 +15,11 @@
 
 const MODEL = 'gemini-2.5-flash-lite'; // 第一候補(表示用)
 // 503/429時はこの順に自動フォールバック(モデルごとに混雑・枠が別)
+// ※2.0系は2026/6/1に廃止済みのため使わない。現行の生きているモデルのみ
 const MODELS = [
   'gemini-2.5-flash-lite',
-  'gemini-2.5-flash',
-  'gemini-2.0-flash-lite'
+  'gemini-3.1-flash-lite',
+  'gemini-2.5-flash'
 ];
 const SIM_TH = 0.38;           // 過去文との類似度がこれ以上なら書き直し (0-1)
 const LEN_MIN = 220;           // 日本語の許容文字数の下限
@@ -349,10 +350,10 @@ async function callGemini(env, prompt, temperature, jsonMode) {
         generationConfig: cfg
       })
     });
-    if (res.status === 503 || res.status === 429) {
+    if (res.status === 503 || res.status === 429 || res.status === 404) {
       lastStatus = res.status;
       lastBody = await res.text();
-      continue; // 次のモデルへ
+      continue; // 混雑・レート制限・モデル廃止 → 次のモデルへ
     }
     if (!res.ok) {
       const t = await res.text();
