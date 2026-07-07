@@ -466,9 +466,9 @@ textarea{resize:vertical; min-height:110px;}
   margin-top:20px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px;
   box-shadow:0 8px 26px rgba(90,70,150,.08);
 }
-.resultHead{display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:12px;}
+.resultHead{display:flex; flex-wrap:wrap; justify-content:flex-end; align-items:center; gap:8px; margin-bottom:12px;}
 .langSel{
-  width:auto; min-width:130px; padding:9px 12px; font-size:14px;
+  width:auto; min-width:120px; margin-right:auto; padding:9px 12px; font-size:14px;
   background:var(--lav); border-color:var(--lavln); color:#5a4f7a; font-weight:600;
 }
 .meta{color:var(--sub); font-size:11px; margin-bottom:10px; letter-spacing:.05em;}
@@ -530,6 +530,7 @@ h2{
   <div class="resultHead">
     <select class="langSel" id="langSel"></select>
     <button class="mini" id="reTrans">翻訳</button>
+    <button class="mini" id="clearBtn">クリア</button>
     <button class="mini" id="resultCopy">コピー</button>
   </div>
   <div class="meta" id="resultMeta">生成するか、自分で本文を入力して「翻訳」を押せます</div>
@@ -745,6 +746,14 @@ byId('reTrans').onclick = async function(){
   if (ok) { showLang(); byId('resultMeta').textContent = labelOf(curLang) + 'を翻訳し直しました'; }
 };
 byId('resultCopy').onclick = function(){ copyText(byId('resultText').value, byId('resultCopy')); };
+byId('clearBtn').onclick = function(){
+  cache = {};
+  curLang = 'ja'; baseLang = 'ja';
+  byId('langSel').value = 'ja';
+  byId('resultText').value = '';
+  byId('resultMeta').textContent = '生成するか、自分で本文を入力して言語を選ぶと翻訳します';
+  byId('resultText').focus();
+};
 
 function labelOf(key){
   for (var i=0;i<LANGS.length;i++){ if (LANGS[i].key===key) return LANGS[i].label; }
