@@ -455,14 +455,19 @@ input::placeholder,textarea::placeholder{color:#b7b3c9;}
 input:focus,textarea:focus,select:focus{outline:none; border-color:var(--acc); box-shadow:0 0 0 3px rgba(194,162,78,.14);}
 textarea{resize:vertical; min-height:110px;}
 .btn{
+  position:relative;
   width:100%; margin-top:22px; padding:16px 0;
   border:none; border-radius:14px;
   background:linear-gradient(135deg,#ccae5c,#b0913c);
   color:#fff; font-size:16px; font-weight:700; letter-spacing:.12em; cursor:pointer;
   box-shadow:0 6px 18px rgba(176,145,60,.32);
+  transition:transform .12s;
 }
-.btn:active{transform:translateY(1px);}
+.btn:active{transform:scale(.97);}
 .btn:disabled{opacity:.55; box-shadow:none;}
+.dot{position:absolute; border-radius:50%; pointer-events:none; opacity:0;}
+.dot.go{animation:pop .6s ease-out forwards;}
+@keyframes pop{0%{opacity:1; transform:translate(0,0) scale(.4);}100%{opacity:0; transform:translate(var(--dx),var(--dy)) scale(1);}}
 .card{
   margin-top:20px; background:var(--card); border:1px solid var(--line); border-radius:16px; padding:16px;
   box-shadow:0 8px 26px rgba(90,70,150,.08);
@@ -729,7 +734,27 @@ byId('resultText').oninput = function(){
 
 byId('tabGuest').onclick = function(){ setMode('guest'); };
 byId('tabReply').onclick = function(){ setMode('reply'); };
-byId('genBtn').onclick = gen;
+function burstDots(btn){
+  var colors = ['#d3b25f','#c9a24e','#e6cf8a','#b0913c'];
+  for(var i=0;i<14;i++){
+    var d = document.createElement('span');
+    d.className = 'dot';
+    var size = 6 + Math.random()*10;
+    d.style.width = size+'px'; d.style.height = size+'px';
+    d.style.left = (42+Math.random()*16)+'%';
+    d.style.top = (30+Math.random()*40)+'%';
+    d.style.background = colors[i%colors.length];
+    var ang = Math.random()*Math.PI*2;
+    var dist = 40+Math.random()*55;
+    d.style.setProperty('--dx',(Math.cos(ang)*dist)+'px');
+    d.style.setProperty('--dy',(Math.sin(ang)*dist)+'px');
+    btn.appendChild(d);
+    void d.offsetWidth; d.classList.add('go');
+    (function(el){ setTimeout(function(){ el.remove(); }, 650); })(d);
+  }
+}
+
+byId('genBtn').onclick = function(){ burstDots(byId('genBtn')); gen(); };
 byId('langSel').onchange = async function(){
   var target = this.value;
   if (target === curLang) return;
