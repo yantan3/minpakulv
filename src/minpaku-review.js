@@ -469,7 +469,7 @@ textarea{resize:vertical; min-height:110px;}
 }
 .btn:active{transform:scale(.97);}
 .btn:disabled{opacity:.55; box-shadow:none; cursor:not-allowed;}
-.dot{position:absolute; border-radius:50%; pointer-events:none; opacity:0; z-index:5;}
+.dot{position:fixed; border-radius:50%; pointer-events:none; opacity:0; z-index:9999;}
 .dot.go{animation:pop .6s ease-out forwards;}
 @keyframes pop{0%{opacity:1; transform:translate(0,0) scale(.4);}100%{opacity:0; transform:translate(var(--dx),var(--dy)) scale(1);}}
 .card{
@@ -740,19 +740,22 @@ byId('tabGuest').onclick = function(){ setMode('guest'); };
 byId('tabReply').onclick = function(){ setMode('reply'); };
 function burstDots(btn){
   var colors = ['#d3b25f','#c9a24e','#e6cf8a','#b0913c'];
-  for(var i=0;i<14;i++){
+  var r = btn.getBoundingClientRect();
+  var cx = r.left + r.width/2;
+  var cy = r.top + r.height/2;
+  for(var i=0;i<16;i++){
     var d = document.createElement('span');
     d.className = 'dot';
-    var size = 6 + Math.random()*10;
+    var size = 7 + Math.random()*11;
     d.style.width = size+'px'; d.style.height = size+'px';
-    d.style.left = (42+Math.random()*16)+'%';
-    d.style.top = (30+Math.random()*40)+'%';
+    d.style.left = (cx + (Math.random()*60-30)) + 'px';
+    d.style.top = (cy + (Math.random()*30-15)) + 'px';
     d.style.background = colors[i%colors.length];
     var ang = Math.random()*Math.PI*2;
-    var dist = 40+Math.random()*55;
+    var dist = 50+Math.random()*70;
     d.style.setProperty('--dx',(Math.cos(ang)*dist)+'px');
     d.style.setProperty('--dy',(Math.sin(ang)*dist)+'px');
-    btn.appendChild(d);
+    document.body.appendChild(d);
     void d.offsetWidth; d.classList.add('go');
     (function(el){ setTimeout(function(){ el.remove(); }, 650); })(d);
   }
