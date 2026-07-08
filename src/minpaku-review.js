@@ -54,6 +54,9 @@ export default {
       if (path === '/init') {
         return await initDb(env);
       }
+      if (path === '/stats') {
+        return await handleStats(url, env);
+      }
       if (path === '/gen' && request.method === 'POST') {
         return await handleGen(request, env, uid);
       }
@@ -114,9 +117,74 @@ async function initDb(env) {
   await env.DB.prepare(
     'CREATE INDEX IF NOT EXISTS idx_reviews_uid_mode_id ON reviews(uid, mode, id)'
   ).run();
+  // 利用状況テーブル(端末ID・累計回数・最終利用日時)
+  await env.DB.prepare(
+    'CREATE TABLE IF NOT EXISTS usage (' +
+    'uid TEXT PRIMARY KEY,' +
+    'count INTEGER DEFAULT 0,' +
+    'last_at TEXT,' +
+    'first_at TEXT)'
+  ).run();
   // 解析失敗時に混入したJSON断片の履歴を掃除
   await env.DB.prepare('DELETE FROM reviews WHERE text LIKE ?').bind('{"ja"%').run();
   return json({ ok: true, message: 'table ready & cleaned' });
+}
+
+// 利用状況の記録(生成成功時に呼ぶ)
+async function bumpUsage(env, uid) {
+  const now = new Date().toISOString();
+  try {
+    await env.DB.prepare(
+      'INSERT INTO usage (uid, count, last_at, first_at) VALUES (?, 1, ?, ?) ' +
+      'ON CONFLICT(uid) DO UPDATE SET count = count + 1, last_at = ?'
+    ).bind(uid, now, now, now).run();
+  } catch (e) { /* 記録失敗は本処理を止めない */ }
+}
+
+// あなた専用の利用状況ページ(STATS_KEYシークレットで保護)
+async function handleStats(url, env) {
+  const key = url.searchParams.get('key') || '';
+  if (!env.STATS_KEY || key !== env.STATS_KEY) {
+    return new Response('forbidden', { status: 403 });
+  }
+  const rows = await env.DB.prepare(
+    'SELECT uid, count, last_at, first_at FROM usage ORDER BY last_at DESC LIMIT 500'
+  ).all();
+  const items = rows.results || [];
+  let totalGen = 0;
+  items.forEach(function (r) { totalGen += (r.count || 0); });
+  const esc = function (s) { return String(s == null ? '' : s).replace(/[<>&]/g, function (c) { return c === '<' ? '&lt;' : c === '>' ? '&gt;' : '&amp;'; }); };
+  const fmt = function (iso) {
+    if (!iso) return '-';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return esc(iso);
+    const p = function (n) { return ('0' + n).slice(-2); };
+    return d.getFullYear() + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+  };
+  let trs = '';
+  items.forEach(function (r) {
+    trs += '<tr><td class="mono">' + esc((r.uid || '').slice(0, 12)) + '…</td><td class="num">' +
+      (r.count || 0) + '</td><td>' + fmt(r.last_at) + '</td><td>' + fmt(r.first_at) + '</td></tr>';
+  });
+  const html = '<!doctype html><html lang="ja"><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>利用状況</title><style>' +
+    'body{font-family:-apple-system,"Hiragino Sans",sans-serif;background:#f7f5fb;color:#2b2740;margin:0;padding:22px 14px;}' +
+    'h1{font-size:18px;letter-spacing:.08em;margin:0 0 4px;}' +
+    '.sum{color:#8a86a3;font-size:13px;margin:0 0 18px;}' +
+    'table{width:100%;border-collapse:collapse;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 4px 14px rgba(90,70,150,.08);}' +
+    'th,td{text-align:left;padding:10px 12px;font-size:13px;border-bottom:1px solid #eee;}' +
+    'th{background:#efeafb;color:#5a4f7a;font-weight:600;}' +
+    '.num,td.num{text-align:right;font-weight:700;color:#8d78c4;}' +
+    '.mono{font-family:ui-monospace,monospace;color:#8a86a3;}' +
+    'tr:last-child td{border-bottom:none;}' +
+    '</style></head><body>' +
+    '<h1>返答自動生成 ・ 利用状況</h1>' +
+    '<p class="sum">端末数 ' + items.length + ' ／ 累計生成 ' + totalGen + ' 回</p>' +
+    '<table><thead><tr><th>端末ID</th><th class="num">回数</th><th>最終利用</th><th>初回</th></tr></thead>' +
+    '<tbody>' + (trs || '<tr><td colspan="4">まだ利用がありません</td></tr>') + '</tbody></table>' +
+    '</body></html>';
+  return new Response(html, { headers: { 'content-type': 'text/html;charset=utf-8' } });
 }
 
 async function handleHistory(url, env, uid) {
@@ -170,6 +238,8 @@ async function handleGen(request, env, uid) {
   await env.DB.prepare(
     'INSERT INTO reviews (mode, name, text, sim, uid, created_at) VALUES (?, ?, ?, ?, ?, ?)'
   ).bind(mode, name, best.ja, best.sim, uid, new Date().toISOString()).run();
+
+  await bumpUsage(env, uid);
 
   return json({
     ja: best.ja,
