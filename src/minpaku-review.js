@@ -614,6 +614,9 @@ h2{
   <input id="nameIn2" placeholder="未入力なら名前なしで生成">
   <label>ゲストのレビュー本文（貼り付け）</label>
   <textarea id="reviewIn" placeholder="届いたレビューをそのまま貼り付け（外国語でもOK）"></textarea>
+  <div style="text-align:right; margin-top:8px;">
+    <button class="mini" id="reviewClear">クリア</button>
+  </div>
 </div>
 
 <button class="btn" id="genBtn">レビューを生成</button>
@@ -870,6 +873,12 @@ byId('clearBtn').onclick = function(){
   byId('resultText').value = '';
   byId('resultMeta').textContent = '生成するか、自分で本文を入力して言語を選ぶと翻訳します';
   byId('resultText').focus();
+};
+byId('reviewClear').onclick = function(){
+  if (!byId('reviewIn').value.trim()) return; // 既に空なら何もしない
+  if (!confirm('レビュー本文を消去します。よろしいですか？')) return;
+  byId('reviewIn').value = '';
+  byId('reviewIn').focus();
 };
 
 function labelOf(key){
