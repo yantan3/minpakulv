@@ -21,10 +21,10 @@ const MODELS = [
   'gemini-3.1-flash-lite',
   'gemini-2.5-flash'
 ];
-const SIM_TH = 0.38;           // 過去文との類似度がこれ以上なら書き直し (0-1)
+const SIM_TH = 0.33;           // 過去文との類似度がこれ以上なら書き直し (0-1、厳しめ)
 const LEN_MIN = 220;           // 日本語の許容文字数の下限
 const LEN_MAX = 380;           // 日本語の許容文字数の上限
-const MAX_ATTEMPTS = 1;        // 生成ループの最大試行回数(RPM対策で抑制)
+const MAX_ATTEMPTS = 2;        // 生成ループの最大試行回数(似ていたら書き直し)
 const HISTORY_FOR_PROMPT = 10; // 「これらと似せるな」でプロンプトに渡す過去文の数
 const HISTORY_FOR_CHECK = 50;  // 類似度チェックに使う過去文の数
 
@@ -210,8 +210,8 @@ async function handleGen(request, env, uid) {
   }
 
   const rows = await env.DB.prepare(
-    'SELECT text FROM reviews WHERE uid = ? AND mode = ? ORDER BY id DESC LIMIT ?'
-  ).bind(uid, mode, HISTORY_FOR_CHECK).all();
+    'SELECT text FROM reviews WHERE uid = ? AND mode = ? ORDER BY id DESC'
+  ).bind(uid, mode).all();
   const pastTexts = (rows.results || []).map(function (r) { return r.text; });
   const pastGrams = pastTexts.map(bigrams);
   const recent = pastTexts.slice(0, HISTORY_FOR_PROMPT);
@@ -291,20 +291,30 @@ const STYLES = [
   'です・ます調だが軽やかでフレンドリーに',
   '簡潔で率直に、短めの文を重ねて',
   '温かみを最優先に、柔らかい言葉選びで',
-  'ややフォーマルに、落ち着いた語り口で'
+  'ややフォーマルに、落ち着いた語り口で',
+  '親しみやすく会話のような口調で',
+  '誠実で実直な、飾らない言葉で',
+  '上品で洗練された、控えめな語り口で'
 ];
 const OPENINGS = [
   '感謝の言葉から書き出す',
   '滞在中の様子や印象から書き出す',
   'チェックインやチェックアウト時の場面から書き出す',
   'またお迎えしたいという気持ちから書き出す',
-  '時候や季節感に軽く触れてから書き出す'
+  '時候や季節感に軽く触れてから書き出す',
+  'ゲストの人柄や振る舞いへの感想から書き出す',
+  'お部屋の使い方への気づきから書き出す',
+  '出会えたことへの喜びから書き出す',
+  '滞在が無事に終わった安堵から書き出す'
 ];
 const CLOSINGS = [
   '再訪歓迎の言葉で締める',
   '他のホストへの推薦の言葉で締める',
   '旅の無事や今後の幸運を祈って締める',
-  'シンプルな感謝で締める'
+  'シンプルな感謝で締める',
+  '今後の活躍や幸せを願う言葉で締める',
+  'また会える日を楽しみにする言葉で締める',
+  'ゲストの人柄を称える言葉で締める'
 ];
 
 function pick(arr) { return arr[Math.floor(Math.random() * arr.length)]; }
@@ -335,6 +345,7 @@ function buildPrompt(mode, name, memo, reviewText, recent, seed, attempt) {
   lines.push('- 締め: ' + seed.closing + '。');
   lines.push('- 絵文字・顔文字・記号装飾は使わない。');
   lines.push('- 渡された情報にない具体的な出来事を創作しない。大げさな誇張もしない。');
+  lines.push('- 「この度は」「滞在中」「心より」「またのお越し」などの定番フレーズに頼らず、書き出し・つなぎ・結びの言い回しを毎回変えること。同じ表現の使い回しを避ける。');
   if (recent.length > 0) {
     lines.push('');
     lines.push('# 過去に生成した文章(最重要: これらと書き出し・構成・語彙・言い回しを明確に変えること)');
