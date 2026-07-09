@@ -158,13 +158,14 @@ async function handleStats(url, env) {
     if (!iso) return '-';
     const d = new Date(iso);
     if (isNaN(d.getTime())) return esc(iso);
+    const j = new Date(d.getTime() + 9 * 3600 * 1000); // UTC→JST(+9h)
     const p = function (n) { return ('0' + n).slice(-2); };
-    return d.getFullYear() + '/' + p(d.getMonth() + 1) + '/' + p(d.getDate()) + ' ' + p(d.getHours()) + ':' + p(d.getMinutes());
+    return j.getUTCFullYear() + '/' + p(j.getUTCMonth() + 1) + '/' + p(j.getUTCDate()) + ' ' + p(j.getUTCHours()) + ':' + p(j.getUTCMinutes());
   };
   let trs = '';
   items.forEach(function (r) {
     trs += '<tr><td class="mono">' + esc((r.uid || '').slice(0, 12)) + '…</td><td class="num">' +
-      (r.count || 0) + '</td><td>' + fmt(r.last_at) + '</td><td>' + fmt(r.first_at) + '</td></tr>';
+      (r.count || 0) + '</td><td>' + fmt(r.last_at) + '</td></tr>';
   });
   const html = '<!doctype html><html lang="ja"><head><meta charset="utf-8">' +
     '<meta name="viewport" content="width=device-width,initial-scale=1">' +
@@ -181,8 +182,8 @@ async function handleStats(url, env) {
     '</style></head><body>' +
     '<h1>返答自動生成 ・ 利用状況</h1>' +
     '<p class="sum">端末数 ' + items.length + ' ／ 累計生成 ' + totalGen + ' 回</p>' +
-    '<table><thead><tr><th>端末ID</th><th class="num">回数</th><th>最終利用</th><th>初回</th></tr></thead>' +
-    '<tbody>' + (trs || '<tr><td colspan="4">まだ利用がありません</td></tr>') + '</tbody></table>' +
+    '<table><thead><tr><th>端末ID</th><th class="num">回数</th><th>最終利用</th></tr></thead>' +
+    '<tbody>' + (trs || '<tr><td colspan="3">まだ利用がありません</td></tr>') + '</tbody></table>' +
     '</body></html>';
   return new Response(html, { headers: { 'content-type': 'text/html;charset=utf-8' } });
 }
